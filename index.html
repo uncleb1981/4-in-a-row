@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>4 In A Row</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #1a1a2e;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Segoe UI', sans-serif;
+      color: white;
+      padding: 20px;
+    }
+
+    h1 { font-size: 2.5rem; margin-bottom: 20px; letter-spacing: 3px; text-transform: uppercase; text-align: center; }
+
+    #turn-indicator {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 12px; font-size: 1rem;
+    }
+    .disc-preview { width: 24px; height: 24px; border-radius: 50%; }
+
+    #status {
+      font-size: 1.3rem; margin-bottom: 20px;
+      height: 2rem; font-weight: bold;
+    }
+    .player-red    { color: #ff0000; }
+    .player-yellow { color: #ffff00; }
+    .draw          { color: #aaa; }
+
+    #board-wrapper {
+      background: #2471a3; border-radius: 16px; padding: 16px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    }
+
+    #board {
+      display: grid;
+      grid-template-columns: repeat(7, 70px);
+      grid-template-rows: repeat(6, 70px);
+      gap: 8px;
+    }
+
+    .cell {
+      width: 70px; height: 70px; border-radius: 50%;
+      background: #1a1a2e; cursor: pointer;
+      transition: background 0.12s ease;
+    }
+    .cell.red    { background: #ff0000 !important; cursor: default; }
+    .cell.yellow { background: #ffff00 !important; cursor: default; }
+    .cell.win    { animation: pulse 0.6s infinite alternate; }
+
+    @keyframes pulse {
+      from { filter: brightness(1); }
+      to   { filter: brightness(1.6); }
+    }
+
+    .btn-row { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; margin-top: 8px; }
+
+    button {
+      padding: 12px 36px;
+      font-size: 1rem; font-weight: bold; letter-spacing: 1px;
+      background: #2471a3; color: white; border: none;
+      border-radius: 8px; cursor: pointer; transition: background 0.2s;
+    }
+    button:hover { background: #1a5276; }
+    button.secondary { background: #444; }
+    button.secondary:hover { background: #2e2e2e; }
+
+    #reset-btn { margin-top: 24px; }
+
+    .panel {
+      display: flex; flex-direction: column; align-items: center; gap: 16px;
+      background: #22223a; border-radius: 16px; padding: 32px 40px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+      max-width: 90vw;
+    }
+
+    .panel p.hint { color: #aaa; font-size: 0.95rem; text-align: center; }
+
+    #join-row { display: flex; gap: 8px; }
+    #join-code-input {
+      font-size: 1.2rem; letter-spacing: 4px; text-transform: uppercase;
+      width: 7ch; text-align: center; padding: 10px; border-radius: 8px;
+      border: none; background: #1a1a2e; color: white;
+    }
+
+    #room-code-display {
+      font-size: 2.4rem; font-weight: bold; letter-spacing: 6px;
+      background: #1a1a2e; padding: 12px 24px; border-radius: 8px;
+    }
+
+    .hidden { display: none !important; }
+
+    #online-error { color: #ff6b6b; min-height: 1.2rem; font-size: 0.95rem; }
+  </style>
+</head>
+<body>
+
+  <h1>4 In A Row</h1>
+
+  <!-- Main menu -->
+  <div id="menu-screen" class="panel">
+    <p class="hint">Choose how you'd like to play</p>
+    <div class="btn-row">
+      <button id="play-ai-btn">Play vs Computer</button>
+      <button id="play-online-btn">Play Online</button>
+    </div>
+  </div>
+
+  <!-- Online sub-menu: create or join a room -->
+  <div id="online-menu-screen" class="panel hidden">
+    <div class="btn-row">
+      <button id="create-room-btn">Create Room</button>
+    </div>
+    <p class="hint">— or —</p>
+    <div id="join-row">
+      <input id="join-code-input" maxlength="4" placeholder="CODE">
+      <button id="join-room-btn">Join</button>
+    </div>
+    <div id="online-error"></div>
+    <button class="secondary" id="online-back-btn">Back</button>
+  </div>
+
+  <!-- Waiting for opponent to join -->
+  <div id="waiting-screen" class="panel hidden">
+    <p class="hint">Share this code with your opponent</p>
+    <div id="room-code-display"></div>
+    <p class="hint" id="waiting-text">Waiting for opponent to join...</p>
+    <button class="secondary" id="waiting-back-btn">Cancel</button>
+  </div>
+
+  <!-- Game screen -->
+  <div id="game-screen" class="hidden">
+    <div id="turn-indicator">
+      <div class="disc-preview" id="disc-preview"></div>
+      <span id="turn-text">Your turn</span>
+    </div>
+
+    <div id="status"></div>
+
+    <div id="board-wrapper">
+      <div id="board"></div>
+    </div>
+
+    <div class="btn-row">
+      <button id="reset-btn">New Game</button>
+      <button class="secondary" id="leave-btn">Back to Menu</button>
+    </div>
+  </div>
+
+  <script>
+    const ROWS = 6, COLS = 7;
+    const menuScreen       = document.getElementById('menu-screen');
+    const onlineMenuScreen = document.getElementById('online-menu-screen');
+    const waitingScreen    = document.getElementById('waiting-screen');
+    const gameScreen       = document.getElementById('game-screen');
+
+    const boardEl    = document.getElementById('board');
+    const statusEl   = document.getElementById('status');
+    const turnText   = document.getElementById('turn-text');
+    const discPrev   = document.getElementById('disc-preview');
+    const resetBtn   = document.getElementById('reset-btn');
+    const leaveBtn   = document.getElementById('leave-btn');
+
+    const playAiBtn      = document.getElementById('play-ai-btn');
+    const playOnlineBtn  = document.getElementById('play-online-btn');
+    const onlineBackBtn  = document.getElementById('online-back-btn');
+    const createRoomBtn  = document.getElementById('create-room-btn');
+    const joinRoomBtn    = document.getElementById('join-room-btn');
+    const joinCodeInput  = document.getElementById('join-code-input');
+    const onlineErrorEl  = document.getElementById('online-error');
+    const roomCodeDisplay = document.getElementById('room-code-display');
+    const waitingText    = document.getElementById('waiting-text');
+    const waitingBackBtn = document.getElementById('waiting-back-btn');
+
+    const STORAGE_KEY = 'connect4OnlineRoom';
+
+    let busy = false;        // prevent clicks while waiting for server
+    let mode = null;         // 'ai' | 'online'
+    let online = null;       // { roomId, playerToken, color }
+    let pollTimer = null;
+
+    // ── Screen helpers ──────────────────────────────────────────────
+    function showScreen(screen) {
+      [menuScreen, onlineMenuScreen, waitingScreen, gameScreen].forEach(s => s.classList.add('hidden'));
+      screen.classList.remove('hidden');
+    }
+
+    // ── Build the grid DOM ──────────────────────────────────────────
+    function buildGrid() {
+      boardEl.innerHTML = '';
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const cell = document.createElement('div');
+          cell.classList.add('cell');
+          cell.dataset.row = r;
+          cell.dataset.col = c;
+          boardEl.appendChild(cell);
+        }
+      }
+    }
+    buildGrid();
+
+    // ── Render board state from server ──────────────────────────────
+    function renderState(state) {
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const cell = boardEl.querySelector(`[data-row="${r}"][data-col="${c}"]`);
+          cell.className = 'cell';
+          cell.style.background = '';
+          const val = state.board[r][c];
+          if (val) cell.classList.add(val);
+        }
+      }
+
+      if (state.winCells && state.winCells.length) {
+        state.winCells.forEach(([r, c]) => {
+          boardEl.querySelector(`[data-row="${r}"][data-col="${c}"]`).classList.add('win');
+        });
+      }
+
+      const myColor = mode === 'online' ? online.color : 'red';
+      const oppLabel = mode === 'online' ? 'Opponent' : 'Computer';
+
+      statusEl.className = '';
+      if (state.winner === myColor) {
+        statusEl.textContent = 'You win! 🎉';
+        statusEl.className = state.winner === 'red' ? 'player-red' : 'player-yellow';
+      } else if (state.winner) {
+        statusEl.textContent = `${oppLabel} wins!`;
+        statusEl.className = state.winner === 'red' ? 'player-red' : 'player-yellow';
+      } else if (state.draw) {
+        statusEl.textContent = "It's a draw!";
+        statusEl.className = 'draw';
+      } else {
+        statusEl.textContent = '';
+      }
+
+      if (state.gameOver) {
+        turnText.textContent = '';
+        discPrev.style.background = 'transparent';
+      } else if (mode === 'online') {
+        if (!state.opponentJoined) {
+          turnText.textContent = 'Waiting for opponent...';
+          discPrev.style.background = 'transparent';
+        } else if (state.isYourTurn) {
+          turnText.textContent = 'Your turn';
+          discPrev.style.background = myColor;
+        } else {
+          turnText.textContent = "Opponent's turn...";
+          discPrev.style.background = myColor === 'red' ? '#ffff00' : '#ff0000';
+        }
+      } else {
+        turnText.textContent = 'Your turn';
+        discPrev.style.background = '#ff0000';
+      }
+    }
+
+    // ── AI-mode fetch helpers ────────────────────────────────────────
+    async function fetchAiState() {
+      const res = await fetch('/state');
+      return res.json();
+    }
+    async function sendAiMove(col) {
+      const res = await fetch('/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ col })
+      });
+      return res.json();
+    }
+    async function sendAiReset() {
+      const res = await fetch('/reset', { method: 'POST' });
+      return res.json();
+    }
+
+    // ── Online-mode fetch helpers ────────────────────────────────────
+    async function createRoom() {
+      const res = await fetch('/api/rooms', { method: 'POST' });
+      return res.json();
+    }
+    async function joinRoom(roomId) {
+      const res = await fetch(`/api/rooms/${roomId}/join`, { method: 'POST' });
+      return res.json();
+    }
+    async function fetchRoomState() {
+      const res = await fetch(`/api/rooms/${online.roomId}/state?token=${online.playerToken}`);
+      return res.json();
+    }
+    async function sendRoomMove(col) {
+      const res = await fetch(`/api/rooms/${online.roomId}/move`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: online.playerToken, col })
+      });
+      return res.json();
+    }
+    async function sendRoomReset() {
+      const res = await fetch(`/api/rooms/${online.roomId}/reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: online.playerToken })
+      });
+      return res.json();
+    }
+
+    // ── Polling for online mode ──────────────────────────────────────
+    function stopPolling() {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    }
+
+    function startPolling() {
+      stopPolling();
+      pollTimer = setInterval(async () => {
+        if (busy) return;
+        const state = await fetchRoomState();
+        if (state.error) { stopPolling(); return; }
+        handleRoomState(state);
+      }, 1000);
+    }
+
+    function handleRoomState(state) {
+      if (!state.opponentJoined) {
+        roomCodeDisplay.textContent = online.roomId;
+        showScreen(waitingScreen);
+      } else {
+        showScreen(gameScreen);
+        renderState(state);
+      }
+    }
+
+    // ── Persist / restore online session ─────────────────────────────
+    // sessionStorage (not localStorage) so two tabs in the same browser
+    // each keep their own seat instead of clobbering each other's token.
+    function saveOnline() {
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(online));
+    }
+    function clearOnline() {
+      sessionStorage.removeItem(STORAGE_KEY);
+      online = null;
+      stopPolling();
+    }
+    async function tryRestoreOnline() {
+      const raw = sessionStorage.getItem(STORAGE_KEY);
+      if (!raw) return false;
+      try {
+        online = JSON.parse(raw);
+      } catch (e) {
+        sessionStorage.removeItem(STORAGE_KEY);
+        return false;
+      }
+      mode = 'online';
+      const state = await fetchRoomState();
+      if (state.error) {
+        clearOnline();
+        return false;
+      }
+      handleRoomState(state);
+      startPolling();
+      return true;
+    }
+
+    // ── Click a column ──────────────────────────────────────────────
+    boardEl.addEventListener('click', async e => {
+      if (busy) return;
+      const cell = e.target.closest('.cell');
+      if (!cell) return;
+      const col = +cell.dataset.col;
+
+      if (mode === 'ai') {
+        busy = true;
+        turnText.textContent = 'Computer thinking...';
+        discPrev.style.background = '#ffff00';
+        const state = await sendAiMove(col);
+        if (!state.error) renderState(state);
+        busy = false;
+      } else if (mode === 'online') {
+        busy = true;
+        const state = await sendRoomMove(col);
+        busy = false;
+        if (!state.error) renderState(state);
+      }
+    });
+
+    // ── Column hover ────────────────────────────────────────────────
+    boardEl.addEventListener('mouseover', e => {
+      if (busy) return;
+      const cell = e.target.closest('.cell');
+      if (!cell) return;
+      const col = +cell.dataset.col;
+      boardEl.querySelectorAll(`[data-col="${col}"]`).forEach(c => {
+        if (!c.classList.contains('red') && !c.classList.contains('yellow'))
+          c.style.background = '#2c3e50';
+      });
+    });
+
+    boardEl.addEventListener('mouseout', e => {
+      const cell = e.target.closest('.cell');
+      if (!cell) return;
+      const col = +cell.dataset.col;
+      boardEl.querySelectorAll(`[data-col="${col}"]`).forEach(c => {
+        c.style.background = '';
+      });
+    });
+
+    // ── Reset / rematch ───────────────────────────────────────────────
+    resetBtn.addEventListener('click', async () => {
+      busy = true;
+      if (mode === 'ai') {
+        const state = await sendAiReset();
+        renderState(state);
+      } else if (mode === 'online') {
+        const state = await sendRoomReset();
+        if (!state.error) renderState(state);
+      }
+      busy = false;
+    });
+
+    // ── Navigation ─────────────────────────────────────────────────────
+    playAiBtn.addEventListener('click', async () => {
+      clearOnline();
+      mode = 'ai';
+      showScreen(gameScreen);
+      const state = await fetchAiState();
+      renderState(state);
+    });
+
+    playOnlineBtn.addEventListener('click', () => {
+      onlineErrorEl.textContent = '';
+      joinCodeInput.value = '';
+      showScreen(onlineMenuScreen);
+    });
+
+    onlineBackBtn.addEventListener('click', () => showScreen(menuScreen));
+
+    createRoomBtn.addEventListener('click', async () => {
+      const res = await createRoom();
+      if (res.error) { onlineErrorEl.textContent = res.error; return; }
+      mode = 'online';
+      online = { roomId: res.roomId, playerToken: res.playerToken, color: res.color };
+      saveOnline();
+      roomCodeDisplay.textContent = online.roomId;
+      showScreen(waitingScreen);
+      startPolling();
+    });
+
+    joinRoomBtn.addEventListener('click', async () => {
+      const code = joinCodeInput.value.trim().toUpperCase();
+      if (!code) return;
+      const res = await joinRoom(code);
+      if (res.error) { onlineErrorEl.textContent = res.error; return; }
+      mode = 'online';
+      online = { roomId: res.roomId, playerToken: res.playerToken, color: res.color };
+      saveOnline();
+      const state = await fetchRoomState();
+      handleRoomState(state);
+      startPolling();
+    });
+
+    waitingBackBtn.addEventListener('click', () => {
+      clearOnline();
+      mode = null;
+      showScreen(menuScreen);
+    });
+
+    leaveBtn.addEventListener('click', () => {
+      clearOnline();
+      mode = null;
+      showScreen(menuScreen);
+    });
+
+    // ── Init ────────────────────────────────────────────────────────
+    async function init() {
+      const restored = await tryRestoreOnline();
+      if (!restored) showScreen(menuScreen);
+    }
+
+    init();
+  </script>
+</body>
+</html>

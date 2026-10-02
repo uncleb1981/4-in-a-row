@@ -19,42 +19,58 @@
       padding: 20px;
     }
 
-    h1 { font-size: 2.5rem; margin-bottom: 20px; letter-spacing: 3px; text-transform: uppercase; text-align: center; }
+    :root {
+      --cell: min(70px, calc((100vw - 80px) / 7));
+      --gap: max(4px, calc(var(--cell) * 0.11));
+    }
+
+    h1 {
+      font-size: clamp(1.4rem, 6vw, 2.5rem);
+      margin-bottom: 20px; letter-spacing: 2px; text-transform: uppercase;
+      text-align: center; padding: 0 12px;
+    }
 
     #turn-indicator {
       display: flex; align-items: center; gap: 10px;
-      margin-bottom: 12px; font-size: 1rem;
+      margin-bottom: 12px; font-size: clamp(0.85rem, 3vw, 1rem);
     }
     .disc-preview { width: 24px; height: 24px; border-radius: 50%; }
 
     #status {
-      font-size: 1.3rem; margin-bottom: 20px;
-      height: 2rem; font-weight: bold;
+      font-size: clamp(1rem, 4vw, 1.3rem); margin-bottom: 20px;
+      height: 2rem; font-weight: bold; text-align: center;
     }
     .player-red    { color: #ff0000; }
     .player-yellow { color: #ffff00; }
     .draw          { color: #aaa; }
 
     #board-wrapper {
-      background: #2471a3; border-radius: 16px; padding: 16px;
+      background: #2471a3; border-radius: 16px;
+      padding: max(8px, calc(var(--cell) * 0.2));
       box-shadow: 0 10px 40px rgba(0,0,0,0.5);
     }
 
     #board {
       display: grid;
-      grid-template-columns: repeat(7, 70px);
-      grid-template-rows: repeat(6, 70px);
-      gap: 8px;
+      grid-template-columns: repeat(7, var(--cell));
+      grid-template-rows: repeat(6, var(--cell));
+      gap: var(--gap);
     }
 
     .cell {
-      width: 70px; height: 70px; border-radius: 50%;
+      width: var(--cell); height: var(--cell); border-radius: 50%;
       background: #1a1a2e; cursor: pointer;
       transition: background 0.12s ease;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
     }
     .cell.red    { background: #ff0000 !important; cursor: default; }
     .cell.yellow { background: #ffff00 !important; cursor: default; }
     .cell.win    { animation: pulse 0.6s infinite alternate; }
+
+    @media (hover: none) {
+      .cell:not(.red):not(.yellow) { background: #1a1a2e !important; }
+    }
 
     @keyframes pulse {
       from { filter: brightness(1); }
@@ -68,6 +84,8 @@
       font-size: 1rem; font-weight: bold; letter-spacing: 1px;
       background: #2471a3; color: white; border: none;
       border-radius: 8px; cursor: pointer; transition: background 0.2s;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
     }
     button:hover { background: #1a5276; }
     button.secondary { background: #444; }

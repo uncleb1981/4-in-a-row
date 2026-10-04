@@ -51,11 +51,21 @@
     }
 
     #board {
+      position: relative;
       display: grid;
       grid-template-columns: repeat(7, var(--cell));
       grid-template-rows: repeat(6, var(--cell));
       gap: var(--gap);
     }
+
+    .falling-disc {
+      position: absolute;
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 5;
+    }
+    .falling-disc.red    { background: #ff0000; }
+    .falling-disc.yellow { background: #ffff00; }
 
     .cell {
       width: var(--cell); height: var(--cell); border-radius: 50%;
@@ -117,9 +127,33 @@
     .hidden { display: none !important; }
 
     #online-error { color: #ff6b6b; min-height: 1.2rem; font-size: 0.95rem; }
+
+    #mute-btn {
+      position: fixed; top: 16px; right: 16px;
+      width: 44px; height: 44px; padding: 0;
+      border-radius: 50%; background: #22223a; border: none;
+      color: white; font-size: 1.3rem; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      z-index: 50; touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #mute-btn:hover { background: #2e2e4a; }
+
+    .confetti-container {
+      position: fixed; inset: 0; pointer-events: none; z-index: 1000; overflow: hidden;
+    }
+    .confetti-piece {
+      position: absolute; top: -12px; width: 8px; height: 14px; opacity: 0.9;
+      animation-name: confetti-fall; animation-timing-function: ease-in; animation-fill-mode: forwards;
+    }
+    @keyframes confetti-fall {
+      to { transform: translateY(110vh) rotate(540deg); opacity: 0.3; }
+    }
   </style>
 </head>
 <body>
+
+  <button id="mute-btn" aria-label="Toggle sound">🔊</button>
 
   <h1>4 In A Row</h1>
 
@@ -197,13 +231,91 @@
     const roomCodeDisplay = document.getElementById('room-code-display');
     const waitingText    = document.getElementById('waiting-text');
     const waitingBackBtn = document.getElementById('waiting-back-btn');
+    const muteBtn         = document.getElementById('mute-btn');
 
     const STORAGE_KEY = 'connect4OnlineRoom';
+    const SOUND_KEY = 'connect4SoundEnabled';
 
     let busy = false;        // prevent clicks while waiting for server
     let mode = null;         // 'ai' | 'online'
     let online = null;       // { roomId, playerToken, color }
     let pollTimer = null;
+    let previousBoard = null; // last-rendered board, used to detect newly-dropped discs
+    let animating = false;    // guards against overlapping drop animations
+
+    // ── Sound, haptics, confetti ─────────────────────────────────────
+    let soundEnabled = localStorage.getItem(SOUND_KEY) !== 'false';
+    let audioCtx = null;
+
+    function updateMuteBtn() { muteBtn.textContent = soundEnabled ? '🔊' : '🔇'; }
+    updateMuteBtn();
+    muteBtn.addEventListener('click', () => {
+      soundEnabled = !soundEnabled;
+      localStorage.setItem(SOUND_KEY, soundEnabled);
+      updateMuteBtn();
+    });
+
+    function getAudioCtx() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      return audioCtx;
+    }
+
+    function playTone({ freq, start = 0, duration, type = 'sine', peak = 0.22, endFreq }) {
+      const ctx = getAudioCtx();
+      const t = ctx.currentTime + start;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, t);
+      if (endFreq) osc.frequency.exponentialRampToValueAtTime(endFreq, t + duration);
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.linearRampToValueAtTime(peak, t + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + duration + 0.02);
+    }
+
+    function playDropSound() {
+      if (!soundEnabled) return;
+      playTone({ freq: 220, endFreq: 90, duration: 0.14, type: 'sine', peak: 0.25 });
+    }
+    function playWinSound() {
+      if (!soundEnabled) return;
+      [523.25, 659.25, 783.99, 1046.50].forEach((freq, i) =>
+        playTone({ freq, start: i * 0.09, duration: 0.4, type: 'triangle', peak: 0.2 }));
+    }
+    function playLoseSound() {
+      if (!soundEnabled) return;
+      playTone({ freq: 300, endFreq: 140, duration: 0.45, type: 'sawtooth', peak: 0.12 });
+    }
+    function playDrawSound() {
+      if (!soundEnabled) return;
+      playTone({ freq: 300, endFreq: 200, duration: 0.35, type: 'sine', peak: 0.15 });
+    }
+
+    function vibrate(pattern) {
+      if (navigator.vibrate) navigator.vibrate(pattern);
+    }
+
+    function confettiBurst() {
+      const colors = ['#ff0000', '#ffff00', '#2471a3', '#ffffff', '#ff69b4'];
+      const container = document.createElement('div');
+      container.className = 'confetti-container';
+      document.body.appendChild(container);
+      for (let i = 0; i < 60; i++) {
+        const piece = document.createElement('div');
+        piece.className = 'confetti-piece';
+        piece.style.left = Math.random() * 100 + 'vw';
+        piece.style.background = colors[Math.floor(Math.random() * colors.length)];
+        piece.style.animationDuration = (2 + Math.random() * 1.5) + 's';
+        piece.style.animationDelay = (Math.random() * 0.3) + 's';
+        piece.style.transform = `rotate(${Math.random() * 360}deg)`;
+        container.appendChild(piece);
+      }
+      setTimeout(() => container.remove(), 3600);
+    }
 
     // ── Screen helpers ──────────────────────────────────────────────
     function showScreen(screen) {
@@ -226,17 +338,94 @@
     }
     buildGrid();
 
+    // ── Drop animation ────────────────────────────────────────────────
+    function getCellOffset(r, c) {
+      const cell = boardEl.querySelector(`[data-row="${r}"][data-col="${c}"]`);
+      const cellRect = cell.getBoundingClientRect();
+      const boardRect = boardEl.getBoundingClientRect();
+      return {
+        left: cellRect.left - boardRect.left,
+        top: cellRect.top - boardRect.top,
+        size: cellRect.width,
+      };
+    }
+
+    function animateDrop(row, col, color) {
+      return new Promise(resolve => {
+        const target = getCellOffset(row, col);
+        const top0 = getCellOffset(0, col);
+
+        // Board isn't laid out (e.g. not visible yet) — skip the animation
+        // rather than risk feeding invalid/zero-size values into disc.animate().
+        if (!(target.size > 0)) { resolve(); return; }
+
+        const startTop = top0.top - (target.size + 6);
+
+        const disc = document.createElement('div');
+        disc.className = 'falling-disc ' + color;
+        disc.style.width = target.size + 'px';
+        disc.style.height = target.size + 'px';
+        disc.style.left = target.left + 'px';
+        disc.style.top = startTop + 'px';
+        boardEl.appendChild(disc);
+
+        const distance = target.top - startTop;
+        const bounce = Math.max(4, target.size * 0.15);
+
+        try {
+          const anim = disc.animate([
+            { transform: 'translateY(0px)', offset: 0 },
+            { transform: `translateY(${distance}px)`, offset: 0.65 },
+            { transform: `translateY(${distance - bounce}px)`, offset: 0.8 },
+            { transform: `translateY(${distance}px)`, offset: 0.92 },
+            { transform: `translateY(${distance - bounce * 0.4}px)`, offset: 0.96 },
+            { transform: `translateY(${distance}px)`, offset: 1 },
+          ], { duration: 480, easing: 'ease-out', fill: 'forwards' });
+
+          anim.onfinish = () => {
+            disc.remove();
+            try { playDropSound(); vibrate(20); } catch (e) { console.error(e); }
+            resolve();
+          };
+        } catch (e) {
+          console.error(e);
+          disc.remove();
+          resolve();
+        }
+      });
+    }
+
     // ── Render board state from server ──────────────────────────────
-    function renderState(state) {
+    async function renderState(state) {
+      const instant = !previousBoard || animating;
+      const newCells = [];
+
       for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
           const cell = boardEl.querySelector(`[data-row="${r}"][data-col="${c}"]`);
-          cell.className = 'cell';
+          cell.classList.remove('red', 'yellow', 'win');
           cell.style.background = '';
           const val = state.board[r][c];
-          if (val) cell.classList.add(val);
+          const prevVal = previousBoard ? previousBoard[r][c] : null;
+          if (val && !prevVal && !instant) {
+            newCells.push({ r, c, color: val });
+          } else if (val) {
+            cell.classList.add(val);
+          }
         }
       }
+
+      if (newCells.length) {
+        animating = true;
+        newCells.sort((a, b) => (a.color === 'red' ? 0 : 1) - (b.color === 'red' ? 0 : 1));
+        for (const nc of newCells) {
+          await animateDrop(nc.r, nc.c, nc.color);
+          boardEl.querySelector(`[data-row="${nc.r}"][data-col="${nc.c}"]`).classList.add(nc.color);
+        }
+        animating = false;
+      }
+
+      previousBoard = state.board.map(row => row.slice());
 
       if (state.winCells && state.winCells.length) {
         state.winCells.forEach(([r, c]) => {
@@ -248,18 +437,23 @@
       const oppLabel = mode === 'online' ? 'Opponent' : 'Computer';
 
       statusEl.className = '';
-      if (state.winner === myColor) {
-        statusEl.textContent = 'You win! 🎉';
-        statusEl.className = state.winner === 'red' ? 'player-red' : 'player-yellow';
-      } else if (state.winner) {
-        statusEl.textContent = `${oppLabel} wins!`;
-        statusEl.className = state.winner === 'red' ? 'player-red' : 'player-yellow';
-      } else if (state.draw) {
-        statusEl.textContent = "It's a draw!";
-        statusEl.className = 'draw';
-      } else {
-        statusEl.textContent = '';
-      }
+      try {
+        if (state.winner === myColor) {
+          statusEl.textContent = 'You win! 🎉';
+          statusEl.className = state.winner === 'red' ? 'player-red' : 'player-yellow';
+          if (!instant) { playWinSound(); vibrate([40, 60, 40, 60, 120]); confettiBurst(); }
+        } else if (state.winner) {
+          statusEl.textContent = `${oppLabel} wins!`;
+          statusEl.className = state.winner === 'red' ? 'player-red' : 'player-yellow';
+          if (!instant) { playLoseSound(); vibrate(80); }
+        } else if (state.draw) {
+          statusEl.textContent = "It's a draw!";
+          statusEl.className = 'draw';
+          if (!instant) playDrawSound();
+        } else {
+          statusEl.textContent = '';
+        }
+      } catch (e) { console.error(e); }
 
       if (state.gameOver) {
         turnText.textContent = '';
@@ -340,17 +534,17 @@
         if (busy) return;
         const state = await fetchRoomState();
         if (state.error) { stopPolling(); return; }
-        handleRoomState(state);
+        await handleRoomState(state);
       }, 1000);
     }
 
-    function handleRoomState(state) {
+    async function handleRoomState(state) {
       if (!state.opponentJoined) {
         roomCodeDisplay.textContent = online.roomId;
         showScreen(waitingScreen);
       } else {
         showScreen(gameScreen);
-        renderState(state);
+        await renderState(state);
       }
     }
 
@@ -380,7 +574,7 @@
         clearOnline();
         return false;
       }
-      handleRoomState(state);
+      await handleRoomState(state);
       startPolling();
       return true;
     }
@@ -396,14 +590,20 @@
         busy = true;
         turnText.textContent = 'Computer thinking...';
         discPrev.style.background = '#ffff00';
-        const state = await sendAiMove(col);
-        if (!state.error) renderState(state);
-        busy = false;
+        try {
+          const state = await sendAiMove(col);
+          if (!state.error) await renderState(state);
+        } finally {
+          busy = false;
+        }
       } else if (mode === 'online') {
         busy = true;
-        const state = await sendRoomMove(col);
-        busy = false;
-        if (!state.error) renderState(state);
+        try {
+          const state = await sendRoomMove(col);
+          if (!state.error) await renderState(state);
+        } finally {
+          busy = false;
+        }
       }
     });
 
@@ -431,23 +631,27 @@
     // ── Reset / rematch ───────────────────────────────────────────────
     resetBtn.addEventListener('click', async () => {
       busy = true;
-      if (mode === 'ai') {
-        const state = await sendAiReset();
-        renderState(state);
-      } else if (mode === 'online') {
-        const state = await sendRoomReset();
-        if (!state.error) renderState(state);
+      try {
+        if (mode === 'ai') {
+          const state = await sendAiReset();
+          await renderState(state);
+        } else if (mode === 'online') {
+          const state = await sendRoomReset();
+          if (!state.error) await renderState(state);
+        }
+      } finally {
+        busy = false;
       }
-      busy = false;
     });
 
     // ── Navigation ─────────────────────────────────────────────────────
     playAiBtn.addEventListener('click', async () => {
       clearOnline();
       mode = 'ai';
+      previousBoard = null;
       showScreen(gameScreen);
       const state = await fetchAiState();
-      renderState(state);
+      await renderState(state);
     });
 
     playOnlineBtn.addEventListener('click', () => {
@@ -462,6 +666,7 @@
       const res = await createRoom();
       if (res.error) { onlineErrorEl.textContent = res.error; return; }
       mode = 'online';
+      previousBoard = null;
       online = { roomId: res.roomId, playerToken: res.playerToken, color: res.color };
       saveOnline();
       roomCodeDisplay.textContent = online.roomId;
@@ -475,10 +680,11 @@
       const res = await joinRoom(code);
       if (res.error) { onlineErrorEl.textContent = res.error; return; }
       mode = 'online';
+      previousBoard = null;
       online = { roomId: res.roomId, playerToken: res.playerToken, color: res.color };
       saveOnline();
       const state = await fetchRoomState();
-      handleRoomState(state);
+      await handleRoomState(state);
       startPolling();
     });
 

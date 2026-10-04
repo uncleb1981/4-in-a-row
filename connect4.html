@@ -14,7 +14,7 @@
       font-family: 'Segoe UI', sans-serif; color: white;
     }
     :root {
-      --cell: min(70px, calc((100vw - 80px) / 9));
+      --cell: min(70px, calc((100vw - 80px) / 7));
       --gap: max(4px, calc(var(--cell) * 0.11));
     }
     h1 {
@@ -42,7 +42,7 @@
     }
     #board {
       display: grid;
-      grid-template-columns: repeat(9, var(--cell));
+      grid-template-columns: repeat(7, var(--cell));
       grid-template-rows: repeat(6, var(--cell));
       gap: var(--gap);
     }
@@ -118,7 +118,7 @@
   </div>
 
   <script>
-    const ROWS = 6, COLS = 9;
+    const ROWS = 6, COLS = 7;
     const RED = 'red', YELLOW = 'yellow', EMPTY = null;
 
     let board, currentPlayer, gameOver, computerThinking, computerWon;

@@ -7,25 +7,30 @@ from flask import Flask, jsonify, request, send_from_directory
 app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-ROWS = 6
-COLS = 7
+ROWS = 6          # default row count when none is requested
+COLS = 7           # fixed — only row count is configurable
 RED = 'red'
 YELLOW = 'yellow'
 BLUE = 'blue'
+GREEN = 'green'
 EMPTY = None
 
 TWO_PLAYER = [RED, YELLOW]
 THREE_PLAYER = [RED, YELLOW, BLUE]
+FOUR_PLAYER = [RED, YELLOW, BLUE, GREEN]
+PLAYER_ORDERS = {2: TWO_PLAYER, 3: THREE_PLAYER, 4: FOUR_PLAYER}
+ALLOWED_ROWS = {6, 8, 10}
 
 ROOM_CODE_CHARS = string.ascii_uppercase + string.digits
 ROOM_TTL_SECONDS = 30 * 60
 
 
 # ── Game state ───────────────────────────────────────────────────────
-def new_game_state(turn_order=None):
+def new_game_state(turn_order=None, rows=None):
     order = list(turn_order or TWO_PLAYER)
+    row_count = rows or ROWS
     return {
-        'board': [[EMPTY] * COLS for _ in range(ROWS)],
+        'board': [[EMPTY] * COLS for _ in range(row_count)],
         'turn_order': order,
         'current_player': order[0],
         'game_over': False,
@@ -37,17 +42,19 @@ def new_game_state(turn_order=None):
     }
 
 
-# Single shared game, used by the vs-computer mode (2 or 3 players).
+# Single shared game, used by the vs-computer mode.
 ai_state = new_game_state()
 
-# Online games (2 or 3 human players), keyed by short room code.
+# Online games (2-4 human players), keyed by short room code.
 rooms = {}
 
 
 # ── Game logic (operates on a state dict, shared by AI mode & rooms) ──
+# Row count is read from the state's own board (len(state['board'])) so
+# each game can have a different height; only column count is fixed.
 def get_target_row(state, col):
     board = state['board']
-    for r in range(ROWS - 1, -1, -1):
+    for r in range(len(board) - 1, -1, -1):
         if board[r][col] is EMPTY:
             return r
     return -1
@@ -55,17 +62,18 @@ def get_target_row(state, col):
 
 def check_win_for(state, row, col, player):
     board = state['board']
+    rows = len(board)
     directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
     for dr, dc in directions:
         line = [(row, col)]
         for s in range(1, 4):
             r, c = row + dr * s, col + dc * s
-            if not (0 <= r < ROWS and 0 <= c < COLS) or board[r][c] != player:
+            if not (0 <= r < rows and 0 <= c < COLS) or board[r][c] != player:
                 break
             line.append((r, c))
         for s in range(1, 4):
             r, c = row - dr * s, col - dc * s
-            if not (0 <= r < ROWS and 0 <= c < COLS) or board[r][c] != player:
+            if not (0 <= r < rows and 0 <= c < COLS) or board[r][c] != player:
                 break
             line.append((r, c))
         if len(line) >= 4:
@@ -79,16 +87,17 @@ def get_valid_cols(state):
 
 def iter_windows(board):
     """Yield every 4-in-a-row window on the board (horizontal/vertical/both diagonals)."""
-    for r in range(ROWS):
+    rows = len(board)
+    for r in range(rows):
         for c in range(COLS - 3):
             yield [board[r][c + i] for i in range(4)]
     for c in range(COLS):
-        for r in range(ROWS - 3):
+        for r in range(rows - 3):
             yield [board[r + i][c] for i in range(4)]
-    for r in range(ROWS - 3):
+    for r in range(rows - 3):
         for c in range(COLS - 3):
             yield [board[r + i][c + i] for i in range(4)]
-    for r in range(ROWS - 3):
+    for r in range(rows - 3):
         for c in range(3, COLS):
             yield [board[r + i][c - i] for i in range(4)]
 
@@ -113,7 +122,7 @@ def score_board_2p(state):
     board = state['board']
     score = 0
     centre = COLS // 2
-    centre_array = [board[r][centre] for r in range(ROWS)]
+    centre_array = [board[r][centre] for r in range(len(board))]
     score += centre_array.count(YELLOW) * 6
     for w in iter_windows(board):
         score += score_window_2p(w, YELLOW)
@@ -178,7 +187,7 @@ def computer_pick_col_2p(state):
     return col if col is not None else -1
 
 
-# ── 3-player AI: maxⁿ search (generalizes minimax to n players) ───────
+# ── 3+ player AI: maxⁿ search (generalizes minimax to n players) ──────
 # Each node scores every player independently (no zero-sum assumption);
 # the player to move picks the child that maximises their own score.
 # No pruning is implemented, so the depth is kept shallow to stay fast.
@@ -205,7 +214,7 @@ def score_board_for(state, player):
     board = state['board']
     score = 0
     centre = COLS // 2
-    centre_array = [board[r][centre] for r in range(ROWS)]
+    centre_array = [board[r][centre] for r in range(len(board))]
     score += centre_array.count(player) * 6
     for w in iter_windows(board):
         score += score_window_np(w, player)
@@ -244,7 +253,7 @@ def maxn(state, depth, turn_order, turn_idx):
     return best_col, best_scores
 
 
-def computer_pick_col_3p(state):
+def computer_pick_col_np(state):
     turn_order = state['turn_order']
     turn_idx = turn_order.index(state['current_player'])
     col, _ = maxn(state, MAXN_DEPTH, turn_order, turn_idx)
@@ -252,8 +261,8 @@ def computer_pick_col_3p(state):
 
 
 def computer_pick_col(state):
-    if len(state['turn_order']) == 3:
-        return computer_pick_col_3p(state)
+    if len(state['turn_order']) >= 3:
+        return computer_pick_col_np(state)
     return computer_pick_col_2p(state)
 
 
@@ -291,9 +300,13 @@ def state_dict(state, moves=None):
     }
 
 
-def parse_player_count(data):
-    players = data.get('players')
-    return THREE_PLAYER if players == 3 else TWO_PLAYER
+def parse_turn_order(data):
+    return PLAYER_ORDERS.get(data.get('players'), TWO_PLAYER)
+
+
+def parse_rows(data):
+    rows = data.get('rows')
+    return rows if rows in ALLOWED_ROWS else ROWS
 
 
 # ── Routes: vs-computer mode ────────────────────────────────────────
@@ -336,11 +349,11 @@ def make_move():
 def reset():
     global ai_state
     data = request.get_json(silent=True) or {}
-    ai_state = new_game_state(parse_player_count(data))
+    ai_state = new_game_state(parse_turn_order(data), parse_rows(data))
     return jsonify(state_dict(ai_state))
 
 
-# ── Routes: online rooms (2 or 3 human players) ─────────────────────
+# ── Routes: online rooms (2-4 human players) ────────────────────────
 def generate_room_code():
     while True:
         code = ''.join(secrets.choice(ROOM_CODE_CHARS) for _ in range(4))
@@ -386,7 +399,7 @@ def create_room():
     data = request.get_json(silent=True) or {}
     room_id = generate_room_code()
     token = secrets.token_hex(8)
-    room = new_game_state(parse_player_count(data))
+    room = new_game_state(parse_turn_order(data), parse_rows(data))
     room['players'] = {room['turn_order'][0]: token}
     rooms[room_id] = room
     return jsonify({'roomId': room_id, 'playerToken': token, 'color': room['turn_order'][0]})
@@ -454,7 +467,7 @@ def room_reset(room_id):
         return jsonify({'error': 'Invalid token'}), 403
 
     players = room['players']
-    fresh = new_game_state(room['turn_order'])
+    fresh = new_game_state(room['turn_order'], len(room['board']))
     fresh['players'] = players
     rooms[room_id.upper()] = fresh
     return room_response(fresh, color)

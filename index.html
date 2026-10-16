@@ -43,6 +43,7 @@
     .player-red    { color: #ff0000; }
     .player-yellow { color: #ffff00; }
     .player-blue   { color: #3498db; }
+    .player-green  { color: #2ecc71; }
     .draw          { color: #aaa; }
 
     #board-wrapper {
@@ -68,6 +69,7 @@
     .falling-disc.red    { background: #ff0000; }
     .falling-disc.yellow { background: #ffff00; }
     .falling-disc.blue   { background: #3498db; }
+    .falling-disc.green  { background: #2ecc71; }
 
     .cell {
       width: var(--cell); height: var(--cell); border-radius: 50%;
@@ -79,6 +81,7 @@
     .cell.red    { background: #ff0000 !important; cursor: default; }
     .cell.yellow { background: #ffff00 !important; cursor: default; }
     .cell.blue   { background: #3498db !important; cursor: default; }
+    .cell.green  { background: #2ecc71 !important; cursor: default; }
     .cell.win    { animation: pulse 0.6s infinite alternate; }
 
     @media (hover: none) {
@@ -176,7 +179,7 @@
 
   <!-- Main menu -->
   <div id="menu-screen" class="panel">
-    <p class="tagline">2 or 3 players · vs computer or online</p>
+    <p class="tagline">2-4 players · vs computer or online</p>
     <p class="hint">Choose how you'd like to play</p>
     <div class="btn-row">
       <button id="play-ai-btn">Play vs Computer</button>
@@ -184,22 +187,36 @@
     </div>
   </div>
 
-  <!-- vs-Computer sub-menu: choose 2 or 3 players -->
+  <!-- vs-Computer sub-menu: choose board size and player count -->
   <div id="ai-menu-screen" class="panel hidden">
+    <p class="hint">Board size</p>
+    <div class="btn-row">
+      <button class="size-btn selected" id="ai-rows-6-btn" data-rows="6">6 Rows</button>
+      <button class="size-btn" id="ai-rows-8-btn" data-rows="8">8 Rows</button>
+      <button class="size-btn" id="ai-rows-10-btn" data-rows="10">10 Rows</button>
+    </div>
     <p class="hint">How many players?</p>
     <div class="btn-row">
       <button id="ai-2p-btn">2 Player (vs Computer)</button>
-      <button id="ai-3p-btn">3 Player (vs 2 Computers) <span class="new-badge">NEW</span></button>
+      <button id="ai-3p-btn">3 Player (vs 2 Computers)</button>
+      <button id="ai-4p-btn">4 Player (vs 3 Computers) <span class="new-badge">NEW</span></button>
     </div>
     <button class="secondary" id="ai-menu-back-btn">Back</button>
   </div>
 
   <!-- Online sub-menu: create or join a room -->
   <div id="online-menu-screen" class="panel hidden">
+    <p class="hint">Board size</p>
+    <div class="btn-row">
+      <button class="size-btn selected" id="online-rows-6-btn" data-rows="6">6 Rows</button>
+      <button class="size-btn" id="online-rows-8-btn" data-rows="8">8 Rows</button>
+      <button class="size-btn" id="online-rows-10-btn" data-rows="10">10 Rows</button>
+    </div>
     <p class="hint">Room size</p>
     <div class="btn-row">
       <button class="size-btn selected" id="online-2p-btn" data-players="2">2 Players</button>
-      <button class="size-btn" id="online-3p-btn" data-players="3">3 Players <span class="new-badge">NEW</span></button>
+      <button class="size-btn" id="online-3p-btn" data-players="3">3 Players</button>
+      <button class="size-btn" id="online-4p-btn" data-players="4">4 Players <span class="new-badge">NEW</span></button>
     </div>
     <div class="btn-row">
       <button id="create-room-btn">Create Room</button>
@@ -241,8 +258,9 @@
   </div>
 
   <script>
-    const ROWS = 6, COLS = 7;
-    const COLOR_HEX = { red: '#ff0000', yellow: '#ffff00', blue: '#3498db' };
+    let ROWS = 6;
+    const COLS = 7;
+    const COLOR_HEX = { red: '#ff0000', yellow: '#ffff00', blue: '#3498db', green: '#2ecc71' };
     const menuScreen       = document.getElementById('menu-screen');
     const aiMenuScreen     = document.getElementById('ai-menu-screen');
     const onlineMenuScreen = document.getElementById('online-menu-screen');
@@ -260,10 +278,14 @@
     const aiMenuBackBtn  = document.getElementById('ai-menu-back-btn');
     const ai2pBtn        = document.getElementById('ai-2p-btn');
     const ai3pBtn        = document.getElementById('ai-3p-btn');
+    const ai4pBtn        = document.getElementById('ai-4p-btn');
+    const aiRowsBtns     = [6, 8, 10].map(n => document.getElementById(`ai-rows-${n}-btn`));
     const playOnlineBtn  = document.getElementById('play-online-btn');
     const onlineBackBtn  = document.getElementById('online-back-btn');
     const online2pBtn    = document.getElementById('online-2p-btn');
     const online3pBtn    = document.getElementById('online-3p-btn');
+    const online4pBtn    = document.getElementById('online-4p-btn');
+    const onlineRowsBtns = [6, 8, 10].map(n => document.getElementById(`online-rows-${n}-btn`));
     const createRoomBtn  = document.getElementById('create-room-btn');
     const joinRoomBtn    = document.getElementById('join-room-btn');
     const joinCodeInput  = document.getElementById('join-code-input');
@@ -280,6 +302,8 @@
     let mode = null;         // 'ai' | 'online'
     let online = null;       // { roomId, playerToken, color }
     let onlinePlayers = 2;   // room size chosen in the online sub-menu
+    let onlineRows = 6;      // board rows chosen in the online sub-menu
+    let aiRows = 6;          // board rows chosen in the vs-computer sub-menu
     let myColor = 'red';     // this client's own color (always red in vs-computer mode)
     let pollTimer = null;
     let previousBoard = null; // last-rendered board, used to detect newly-dropped discs
@@ -366,7 +390,9 @@
     }
 
     // ── Build the grid DOM ──────────────────────────────────────────
-    function buildGrid() {
+    function buildGrid(rows) {
+      ROWS = rows;
+      boardEl.style.gridTemplateRows = `repeat(${rows}, var(--cell))`;
       boardEl.innerHTML = '';
       for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
@@ -378,7 +404,7 @@
         }
       }
     }
-    buildGrid();
+    buildGrid(ROWS);
 
     // ── Drop animation ────────────────────────────────────────────────
     function getCellOffset(r, c) {
@@ -441,6 +467,10 @@
     function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
     async function renderState(state) {
+      if (state.board.length !== ROWS) {
+        buildGrid(state.board.length);
+        previousBoard = null; // grid was rebuilt — nothing to diff against
+      }
       const instant = !previousBoard || animating;
 
       // Prefer the server's explicit move list (correctly ordered, even when
@@ -454,7 +484,7 @@
       for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
           const cell = boardEl.querySelector(`[data-row="${r}"][data-col="${c}"]`);
-          cell.classList.remove('red', 'yellow', 'blue', 'win');
+          cell.classList.remove('red', 'yellow', 'blue', 'green', 'win');
           cell.style.background = '';
           const val = state.board[r][c];
           const prevVal = previousBoard ? previousBoard[r][c] : null;
@@ -534,21 +564,21 @@
       });
       return res.json();
     }
-    async function sendAiReset(players) {
+    async function sendAiReset(players, rows) {
       const res = await fetch('/reset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ players })
+        body: JSON.stringify({ players, rows })
       });
       return res.json();
     }
 
     // ── Online-mode fetch helpers ────────────────────────────────────
-    async function createRoom(players) {
+    async function createRoom(players, rows) {
       const res = await fetch('/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ players })
+        body: JSON.stringify({ players, rows })
       });
       return res.json();
     }
@@ -671,7 +701,7 @@
       if (!cell) return;
       const col = +cell.dataset.col;
       boardEl.querySelectorAll(`[data-col="${col}"]`).forEach(c => {
-        if (!c.classList.contains('red') && !c.classList.contains('yellow') && !c.classList.contains('blue'))
+        if (!c.classList.contains('red') && !c.classList.contains('yellow') && !c.classList.contains('blue') && !c.classList.contains('green'))
           c.style.background = '#2c3e50';
       });
     });
@@ -690,7 +720,7 @@
       busy = true;
       try {
         if (mode === 'ai') {
-          const state = await sendAiReset(aiPlayerCount);
+          const state = await sendAiReset(aiPlayerCount, aiRows);
           await renderState(state);
         } else if (mode === 'online') {
           const state = await sendRoomReset();
@@ -711,7 +741,7 @@
       aiPlayerCount = players;
       previousBoard = null;
       showScreen(gameScreen);
-      const state = await sendAiReset(players);
+      const state = await sendAiReset(players, aiRows);
       await renderState(state);
     }
 
@@ -719,6 +749,12 @@
     aiMenuBackBtn.addEventListener('click', () => showScreen(menuScreen));
     ai2pBtn.addEventListener('click', () => startAiGame(2));
     ai3pBtn.addEventListener('click', () => startAiGame(3));
+    ai4pBtn.addEventListener('click', () => startAiGame(4));
+
+    aiRowsBtns.forEach(btn => btn.addEventListener('click', () => {
+      aiRows = +btn.dataset.rows;
+      aiRowsBtns.forEach(b => b.classList.toggle('selected', b === btn));
+    }));
 
     playOnlineBtn.addEventListener('click', () => {
       onlineErrorEl.textContent = '';
@@ -730,14 +766,20 @@
 
     function selectOnlineSize(players) {
       onlinePlayers = players;
-      online2pBtn.classList.toggle('selected', players === 2);
-      online3pBtn.classList.toggle('selected', players === 3);
+      [online2pBtn, online3pBtn, online4pBtn].forEach(b =>
+        b.classList.toggle('selected', +b.dataset.players === players));
     }
     online2pBtn.addEventListener('click', () => selectOnlineSize(2));
     online3pBtn.addEventListener('click', () => selectOnlineSize(3));
+    online4pBtn.addEventListener('click', () => selectOnlineSize(4));
+
+    onlineRowsBtns.forEach(btn => btn.addEventListener('click', () => {
+      onlineRows = +btn.dataset.rows;
+      onlineRowsBtns.forEach(b => b.classList.toggle('selected', b === btn));
+    }));
 
     createRoomBtn.addEventListener('click', async () => {
-      const res = await createRoom(onlinePlayers);
+      const res = await createRoom(onlinePlayers, onlineRows);
       if (res.error) { onlineErrorEl.textContent = res.error; return; }
       mode = 'online';
       previousBoard = null;

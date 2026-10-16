@@ -183,16 +183,25 @@ def minimax(state, depth, alpha, beta, maximising):
         return best_col, best_score
 
 
+# Search depth scales down as the board gets wider. A wider board grows
+# the search tree exponentially (minimax) or combinatorially (maxⁿ, which
+# has no pruning at all) — without this, wide boards make the AI visibly
+# slow, especially on a modest shared CPU like Render's free tier.
+def ai_depth(cols, multiplayer):
+    if multiplayer:
+        return 4 if cols <= 7 else 3
+    return 5 if cols <= 7 else 4
+
+
 def computer_pick_col_2p(state):
-    col, _ = minimax(state, 5, float('-inf'), float('inf'), True)
+    depth = ai_depth(len(state['board'][0]), multiplayer=False)
+    col, _ = minimax(state, depth, float('-inf'), float('inf'), True)
     return col if col is not None else -1
 
 
 # ── 3+ player AI: maxⁿ search (generalizes minimax to n players) ──────
 # Each node scores every player independently (no zero-sum assumption);
 # the player to move picks the child that maximises their own score.
-# No pruning is implemented, so the depth is kept shallow to stay fast.
-MAXN_DEPTH = 4
 
 
 def score_window_np(window, player):
@@ -257,7 +266,8 @@ def maxn(state, depth, turn_order, turn_idx):
 def computer_pick_col_np(state):
     turn_order = state['turn_order']
     turn_idx = turn_order.index(state['current_player'])
-    col, _ = maxn(state, MAXN_DEPTH, turn_order, turn_idx)
+    depth = ai_depth(len(state['board'][0]), multiplayer=True)
+    col, _ = maxn(state, depth, turn_order, turn_idx)
     return col if col is not None else -1
 
 

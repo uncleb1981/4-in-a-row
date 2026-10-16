@@ -42,6 +42,7 @@
     }
     .player-red    { color: #ff0000; }
     .player-yellow { color: #ffff00; }
+    .player-blue   { color: #3498db; }
     .draw          { color: #aaa; }
 
     #board-wrapper {
@@ -66,6 +67,7 @@
     }
     .falling-disc.red    { background: #ff0000; }
     .falling-disc.yellow { background: #ffff00; }
+    .falling-disc.blue   { background: #3498db; }
 
     .cell {
       width: var(--cell); height: var(--cell); border-radius: 50%;
@@ -76,6 +78,7 @@
     }
     .cell.red    { background: #ff0000 !important; cursor: default; }
     .cell.yellow { background: #ffff00 !important; cursor: default; }
+    .cell.blue   { background: #3498db !important; cursor: default; }
     .cell.win    { animation: pulse 0.6s infinite alternate; }
 
     @media (hover: none) {
@@ -100,6 +103,9 @@
     button:hover { background: #1a5276; }
     button.secondary { background: #444; }
     button.secondary:hover { background: #2e2e2e; }
+
+    .size-btn { background: #333; opacity: 0.7; }
+    .size-btn.selected { background: #2471a3; opacity: 1; box-shadow: 0 0 0 2px white inset; }
 
     #reset-btn { margin-top: 24px; }
 
@@ -166,8 +172,23 @@
     </div>
   </div>
 
+  <!-- vs-Computer sub-menu: choose 2 or 3 players -->
+  <div id="ai-menu-screen" class="panel hidden">
+    <p class="hint">How many players?</p>
+    <div class="btn-row">
+      <button id="ai-2p-btn">2 Player (vs Computer)</button>
+      <button id="ai-3p-btn">3 Player (vs 2 Computers)</button>
+    </div>
+    <button class="secondary" id="ai-menu-back-btn">Back</button>
+  </div>
+
   <!-- Online sub-menu: create or join a room -->
   <div id="online-menu-screen" class="panel hidden">
+    <p class="hint">Room size</p>
+    <div class="btn-row">
+      <button class="size-btn selected" id="online-2p-btn" data-players="2">2 Players</button>
+      <button class="size-btn" id="online-3p-btn" data-players="3">3 Players</button>
+    </div>
     <div class="btn-row">
       <button id="create-room-btn">Create Room</button>
     </div>
@@ -180,9 +201,9 @@
     <button class="secondary" id="online-back-btn">Back</button>
   </div>
 
-  <!-- Waiting for opponent to join -->
+  <!-- Waiting for other players to join -->
   <div id="waiting-screen" class="panel hidden">
-    <p class="hint">Share this code with your opponent</p>
+    <p class="hint">Share this code with your opponents</p>
     <div id="room-code-display"></div>
     <p class="hint" id="waiting-text">Waiting for opponent to join...</p>
     <button class="secondary" id="waiting-back-btn">Cancel</button>
@@ -209,7 +230,9 @@
 
   <script>
     const ROWS = 6, COLS = 7;
+    const COLOR_HEX = { red: '#ff0000', yellow: '#ffff00', blue: '#3498db' };
     const menuScreen       = document.getElementById('menu-screen');
+    const aiMenuScreen     = document.getElementById('ai-menu-screen');
     const onlineMenuScreen = document.getElementById('online-menu-screen');
     const waitingScreen    = document.getElementById('waiting-screen');
     const gameScreen       = document.getElementById('game-screen');
@@ -222,8 +245,13 @@
     const leaveBtn   = document.getElementById('leave-btn');
 
     const playAiBtn      = document.getElementById('play-ai-btn');
+    const aiMenuBackBtn  = document.getElementById('ai-menu-back-btn');
+    const ai2pBtn        = document.getElementById('ai-2p-btn');
+    const ai3pBtn        = document.getElementById('ai-3p-btn');
     const playOnlineBtn  = document.getElementById('play-online-btn');
     const onlineBackBtn  = document.getElementById('online-back-btn');
+    const online2pBtn    = document.getElementById('online-2p-btn');
+    const online3pBtn    = document.getElementById('online-3p-btn');
     const createRoomBtn  = document.getElementById('create-room-btn');
     const joinRoomBtn    = document.getElementById('join-room-btn');
     const joinCodeInput  = document.getElementById('join-code-input');
@@ -239,6 +267,8 @@
     let busy = false;        // prevent clicks while waiting for server
     let mode = null;         // 'ai' | 'online'
     let online = null;       // { roomId, playerToken, color }
+    let onlinePlayers = 2;   // room size chosen in the online sub-menu
+    let myColor = 'red';     // this client's own color (always red in vs-computer mode)
     let pollTimer = null;
     let previousBoard = null; // last-rendered board, used to detect newly-dropped discs
     let animating = false;    // guards against overlapping drop animations
@@ -319,7 +349,7 @@
 
     // ── Screen helpers ──────────────────────────────────────────────
     function showScreen(screen) {
-      [menuScreen, onlineMenuScreen, waitingScreen, gameScreen].forEach(s => s.classList.add('hidden'));
+      [menuScreen, aiMenuScreen, onlineMenuScreen, waitingScreen, gameScreen].forEach(s => s.classList.add('hidden'));
       screen.classList.remove('hidden');
     }
 
@@ -396,18 +426,30 @@
     }
 
     // ── Render board state from server ──────────────────────────────
+    function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
     async function renderState(state) {
       const instant = !previousBoard || animating;
-      const newCells = [];
+
+      // Prefer the server's explicit move list (correctly ordered, even when
+      // 2 AI opponents move in one response) — fall back to diffing the
+      // board against what we last rendered (used for online polling, which
+      // has no "moves" to report since it just reads current state).
+      const usingMoves = !instant && state.moves && state.moves.length > 0;
+      const newCells = usingMoves ? state.moves.map(m => ({ r: m.row, c: m.col, color: m.color })) : [];
+      const newCellSet = new Set(newCells.map(nc => `${nc.r},${nc.c}`));
 
       for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
           const cell = boardEl.querySelector(`[data-row="${r}"][data-col="${c}"]`);
-          cell.classList.remove('red', 'yellow', 'win');
+          cell.classList.remove('red', 'yellow', 'blue', 'win');
           cell.style.background = '';
           const val = state.board[r][c];
           const prevVal = previousBoard ? previousBoard[r][c] : null;
-          if (val && !prevVal && !instant) {
+          if (usingMoves && newCellSet.has(`${r},${c}`)) {
+            continue; // already queued via state.moves
+          }
+          if (val && !usingMoves && !instant && !prevVal) {
             newCells.push({ r, c, color: val });
           } else if (val) {
             cell.classList.add(val);
@@ -417,7 +459,6 @@
 
       if (newCells.length) {
         animating = true;
-        newCells.sort((a, b) => (a.color === 'red' ? 0 : 1) - (b.color === 'red' ? 0 : 1));
         for (const nc of newCells) {
           await animateDrop(nc.r, nc.c, nc.color);
           boardEl.querySelector(`[data-row="${nc.r}"][data-col="${nc.c}"]`).classList.add(nc.color);
@@ -433,18 +474,15 @@
         });
       }
 
-      const myColor = mode === 'online' ? online.color : 'red';
-      const oppLabel = mode === 'online' ? 'Opponent' : 'Computer';
-
       statusEl.className = '';
       try {
         if (state.winner === myColor) {
           statusEl.textContent = 'You win! 🎉';
-          statusEl.className = state.winner === 'red' ? 'player-red' : 'player-yellow';
+          statusEl.className = 'player-' + state.winner;
           if (!instant) { playWinSound(); vibrate([40, 60, 40, 60, 120]); confettiBurst(); }
         } else if (state.winner) {
-          statusEl.textContent = `${oppLabel} wins!`;
-          statusEl.className = state.winner === 'red' ? 'player-red' : 'player-yellow';
+          statusEl.textContent = `${cap(state.winner)} wins!`;
+          statusEl.className = 'player-' + state.winner;
           if (!instant) { playLoseSound(); vibrate(80); }
         } else if (state.draw) {
           statusEl.textContent = "It's a draw!";
@@ -458,20 +496,16 @@
       if (state.gameOver) {
         turnText.textContent = '';
         discPrev.style.background = 'transparent';
-      } else if (mode === 'online') {
-        if (!state.opponentJoined) {
-          turnText.textContent = 'Waiting for opponent...';
-          discPrev.style.background = 'transparent';
-        } else if (state.isYourTurn) {
-          turnText.textContent = 'Your turn';
-          discPrev.style.background = myColor;
-        } else {
-          turnText.textContent = "Opponent's turn...";
-          discPrev.style.background = myColor === 'red' ? '#ffff00' : '#ff0000';
-        }
-      } else {
+      } else if (mode === 'online' && !state.allJoined) {
+        const need = state.seatsTotal - state.seatsTaken;
+        turnText.textContent = `Waiting for ${need} more player${need === 1 ? '' : 's'}...`;
+        discPrev.style.background = 'transparent';
+      } else if (state.currentPlayer === myColor) {
         turnText.textContent = 'Your turn';
-        discPrev.style.background = '#ff0000';
+        discPrev.style.background = COLOR_HEX[myColor];
+      } else {
+        turnText.textContent = `${cap(state.currentPlayer)}'s turn...`;
+        discPrev.style.background = COLOR_HEX[state.currentPlayer];
       }
     }
 
@@ -488,14 +522,22 @@
       });
       return res.json();
     }
-    async function sendAiReset() {
-      const res = await fetch('/reset', { method: 'POST' });
+    async function sendAiReset(players) {
+      const res = await fetch('/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ players })
+      });
       return res.json();
     }
 
     // ── Online-mode fetch helpers ────────────────────────────────────
-    async function createRoom() {
-      const res = await fetch('/api/rooms', { method: 'POST' });
+    async function createRoom(players) {
+      const res = await fetch('/api/rooms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ players })
+      });
       return res.json();
     }
     async function joinRoom(roomId) {
@@ -539,8 +581,10 @@
     }
 
     async function handleRoomState(state) {
-      if (!state.opponentJoined) {
+      if (!state.allJoined) {
         roomCodeDisplay.textContent = online.roomId;
+        const need = state.seatsTotal - state.seatsTaken;
+        waitingText.textContent = `Waiting for ${need} more player${need === 1 ? '' : 's'} to join...`;
         showScreen(waitingScreen);
       } else {
         showScreen(gameScreen);
@@ -569,6 +613,7 @@
         return false;
       }
       mode = 'online';
+      myColor = online.color;
       const state = await fetchRoomState();
       if (state.error) {
         clearOnline();
@@ -589,7 +634,7 @@
       if (mode === 'ai') {
         busy = true;
         turnText.textContent = 'Computer thinking...';
-        discPrev.style.background = '#ffff00';
+        discPrev.style.background = '#888';
         try {
           const state = await sendAiMove(col);
           if (!state.error) await renderState(state);
@@ -614,7 +659,7 @@
       if (!cell) return;
       const col = +cell.dataset.col;
       boardEl.querySelectorAll(`[data-col="${col}"]`).forEach(c => {
-        if (!c.classList.contains('red') && !c.classList.contains('yellow'))
+        if (!c.classList.contains('red') && !c.classList.contains('yellow') && !c.classList.contains('blue'))
           c.style.background = '#2c3e50';
       });
     });
@@ -633,7 +678,7 @@
       busy = true;
       try {
         if (mode === 'ai') {
-          const state = await sendAiReset();
+          const state = await sendAiReset(aiPlayerCount);
           await renderState(state);
         } else if (mode === 'online') {
           const state = await sendRoomReset();
@@ -645,14 +690,23 @@
     });
 
     // ── Navigation ─────────────────────────────────────────────────────
-    playAiBtn.addEventListener('click', async () => {
+    let aiPlayerCount = 2;
+
+    async function startAiGame(players) {
       clearOnline();
       mode = 'ai';
+      myColor = 'red';
+      aiPlayerCount = players;
       previousBoard = null;
       showScreen(gameScreen);
-      const state = await fetchAiState();
+      const state = await sendAiReset(players);
       await renderState(state);
-    });
+    }
+
+    playAiBtn.addEventListener('click', () => showScreen(aiMenuScreen));
+    aiMenuBackBtn.addEventListener('click', () => showScreen(menuScreen));
+    ai2pBtn.addEventListener('click', () => startAiGame(2));
+    ai3pBtn.addEventListener('click', () => startAiGame(3));
 
     playOnlineBtn.addEventListener('click', () => {
       onlineErrorEl.textContent = '';
@@ -662,12 +716,21 @@
 
     onlineBackBtn.addEventListener('click', () => showScreen(menuScreen));
 
+    function selectOnlineSize(players) {
+      onlinePlayers = players;
+      online2pBtn.classList.toggle('selected', players === 2);
+      online3pBtn.classList.toggle('selected', players === 3);
+    }
+    online2pBtn.addEventListener('click', () => selectOnlineSize(2));
+    online3pBtn.addEventListener('click', () => selectOnlineSize(3));
+
     createRoomBtn.addEventListener('click', async () => {
-      const res = await createRoom();
+      const res = await createRoom(onlinePlayers);
       if (res.error) { onlineErrorEl.textContent = res.error; return; }
       mode = 'online';
       previousBoard = null;
       online = { roomId: res.roomId, playerToken: res.playerToken, color: res.color };
+      myColor = online.color;
       saveOnline();
       roomCodeDisplay.textContent = online.roomId;
       showScreen(waitingScreen);
@@ -682,6 +745,7 @@
       mode = 'online';
       previousBoard = null;
       online = { roomId: res.roomId, playerToken: res.playerToken, color: res.color };
+      myColor = online.color;
       saveOnline();
       const state = await fetchRoomState();
       await handleRoomState(state);
@@ -698,6 +762,26 @@
       clearOnline();
       mode = null;
       showScreen(menuScreen);
+    });
+
+    // ── Recover from a stuck animation ──────────────────────────────────
+    // Backgrounded tabs can throttle/pause Web Animations indefinitely, so
+    // anim.onfinish may never fire while hidden — leaving busy/animating
+    // stuck. If that happens, clean up and resync once the tab is visible.
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState !== 'visible') return;
+      const stuck = animating || document.querySelector('.falling-disc');
+      if (!stuck || gameScreen.classList.contains('hidden')) return;
+      document.querySelectorAll('.falling-disc').forEach(d => d.remove());
+      animating = false;
+      busy = false;
+      previousBoard = null; // force an instant resync, skip re-animating
+      if (mode === 'ai') {
+        await renderState(await fetchAiState());
+      } else if (mode === 'online' && online) {
+        const state = await fetchRoomState();
+        if (!state.error) await handleRoomState(state);
+      }
     });
 
     // ── Init ────────────────────────────────────────────────────────

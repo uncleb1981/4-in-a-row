@@ -7,8 +7,8 @@ from flask import Flask, jsonify, request, send_from_directory
 app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-ROWS = 6            # fixed — only column count is configurable
-COLS = 7             # default column count when none is requested
+ROWS = 6          # default row count when none is requested
+COLS = 7           # fixed — only row count is configurable
 RED = 'red'
 YELLOW = 'yellow'
 BLUE = 'blue'
@@ -19,18 +19,18 @@ TWO_PLAYER = [RED, YELLOW]
 THREE_PLAYER = [RED, YELLOW, BLUE]
 FOUR_PLAYER = [RED, YELLOW, BLUE, GREEN]
 PLAYER_ORDERS = {2: TWO_PLAYER, 3: THREE_PLAYER, 4: FOUR_PLAYER}
-ALLOWED_COLS = {7, 9, 11}
+ALLOWED_ROWS = {6, 8, 10}
 
 ROOM_CODE_CHARS = string.ascii_uppercase + string.digits
 ROOM_TTL_SECONDS = 30 * 60
 
 
 # ── Game state ───────────────────────────────────────────────────────
-def new_game_state(turn_order=None, cols=None):
+def new_game_state(turn_order=None, rows=None):
     order = list(turn_order or TWO_PLAYER)
-    col_count = cols or COLS
+    row_count = rows or ROWS
     return {
-        'board': [[EMPTY] * col_count for _ in range(ROWS)],
+        'board': [[EMPTY] * COLS for _ in range(row_count)],
         'turn_order': order,
         'current_player': order[0],
         'game_over': False,
@@ -50,8 +50,8 @@ rooms = {}
 
 
 # ── Game logic (operates on a state dict, shared by AI mode & rooms) ──
-# Column count is read from the state's own board (len(state['board'][0]))
-# so each game can have a different width; only row count is fixed.
+# Row count is read from the state's own board (len(state['board'])) so
+# each game can have a different height; only column count is fixed.
 def get_target_row(state, col):
     board = state['board']
     for r in range(len(board) - 1, -1, -1):
@@ -62,18 +62,18 @@ def get_target_row(state, col):
 
 def check_win_for(state, row, col, player):
     board = state['board']
-    cols = len(board[0])
+    rows = len(board)
     directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
     for dr, dc in directions:
         line = [(row, col)]
         for s in range(1, 4):
             r, c = row + dr * s, col + dc * s
-            if not (0 <= r < ROWS and 0 <= c < cols) or board[r][c] != player:
+            if not (0 <= r < rows and 0 <= c < COLS) or board[r][c] != player:
                 break
             line.append((r, c))
         for s in range(1, 4):
             r, c = row - dr * s, col - dc * s
-            if not (0 <= r < ROWS and 0 <= c < cols) or board[r][c] != player:
+            if not (0 <= r < rows and 0 <= c < COLS) or board[r][c] != player:
                 break
             line.append((r, c))
         if len(line) >= 4:
@@ -82,24 +82,23 @@ def check_win_for(state, row, col, player):
 
 
 def get_valid_cols(state):
-    cols = len(state['board'][0])
-    return [c for c in range(cols) if get_target_row(state, c) != -1]
+    return [c for c in range(COLS) if get_target_row(state, c) != -1]
 
 
 def iter_windows(board):
     """Yield every 4-in-a-row window on the board (horizontal/vertical/both diagonals)."""
-    cols = len(board[0])
-    for r in range(ROWS):
-        for c in range(cols - 3):
+    rows = len(board)
+    for r in range(rows):
+        for c in range(COLS - 3):
             yield [board[r][c + i] for i in range(4)]
-    for c in range(cols):
-        for r in range(ROWS - 3):
+    for c in range(COLS):
+        for r in range(rows - 3):
             yield [board[r + i][c] for i in range(4)]
-    for r in range(ROWS - 3):
-        for c in range(cols - 3):
+    for r in range(rows - 3):
+        for c in range(COLS - 3):
             yield [board[r + i][c + i] for i in range(4)]
-    for r in range(ROWS - 3):
-        for c in range(3, cols):
+    for r in range(rows - 3):
+        for c in range(3, COLS):
             yield [board[r + i][c - i] for i in range(4)]
 
 
@@ -122,8 +121,8 @@ def score_board_2p(state):
     """Heuristic score of the board from YELLOW's perspective."""
     board = state['board']
     score = 0
-    centre = len(board[0]) // 2
-    centre_array = [board[r][centre] for r in range(ROWS)]
+    centre = COLS // 2
+    centre_array = [board[r][centre] for r in range(len(board))]
     score += centre_array.count(YELLOW) * 6
     for w in iter_windows(board):
         score += score_window_2p(w, YELLOW)
@@ -141,7 +140,7 @@ def minimax(state, depth, alpha, beta, maximising):
     if depth == 0:
         return None, score_board_2p(state)
 
-    centre = len(board[0]) // 2
+    centre = COLS // 2
     valid_cols.sort(key=lambda c: abs(centre - c))
 
     if maximising:  # Computer (YELLOW) wants highest score
@@ -214,8 +213,8 @@ def score_window_np(window, player):
 def score_board_for(state, player):
     board = state['board']
     score = 0
-    centre = len(board[0]) // 2
-    centre_array = [board[r][centre] for r in range(ROWS)]
+    centre = COLS // 2
+    centre_array = [board[r][centre] for r in range(len(board))]
     score += centre_array.count(player) * 6
     for w in iter_windows(board):
         score += score_window_np(w, player)
@@ -234,7 +233,7 @@ def maxn(state, depth, turn_order, turn_idx):
     if depth == 0:
         return None, {p: score_board_for(state, p) for p in turn_order}
 
-    centre = len(board[0]) // 2
+    centre = COLS // 2
     valid_cols.sort(key=lambda c: abs(centre - c))
     next_idx = (turn_idx + 1) % len(turn_order)
 
@@ -277,7 +276,7 @@ def place_piece(state, col, player):
         state['game_over'] = True
         state['winner'] = player
         state['win_cells'] = wc
-    elif all(state['board'][0][c] is not EMPTY for c in range(len(state['board'][0]))):
+    elif all(state['board'][0][c] is not EMPTY for c in range(COLS)):
         state['game_over'] = True
         state['is_draw'] = True
     else:
@@ -305,9 +304,9 @@ def parse_turn_order(data):
     return PLAYER_ORDERS.get(data.get('players'), TWO_PLAYER)
 
 
-def parse_cols(data):
-    cols = data.get('cols')
-    return cols if cols in ALLOWED_COLS else COLS
+def parse_rows(data):
+    rows = data.get('rows')
+    return rows if rows in ALLOWED_ROWS else ROWS
 
 
 # ── Routes: vs-computer mode ────────────────────────────────────────
@@ -326,9 +325,8 @@ def make_move():
     if ai_state['game_over'] or ai_state['current_player'] != RED:
         return jsonify({'error': 'Not your turn'}), 400
 
-    cols = len(ai_state['board'][0])
     col = request.json.get('col')
-    if col is None or not (0 <= col < cols):
+    if col is None or not (0 <= col < COLS):
         return jsonify({'error': 'Invalid column'}), 400
     if get_target_row(ai_state, col) == -1:
         return jsonify({'error': 'Column full'}), 400
@@ -351,7 +349,7 @@ def make_move():
 def reset():
     global ai_state
     data = request.get_json(silent=True) or {}
-    ai_state = new_game_state(parse_turn_order(data), parse_cols(data))
+    ai_state = new_game_state(parse_turn_order(data), parse_rows(data))
     return jsonify(state_dict(ai_state))
 
 
@@ -401,7 +399,7 @@ def create_room():
     data = request.get_json(silent=True) or {}
     room_id = generate_room_code()
     token = secrets.token_hex(8)
-    room = new_game_state(parse_turn_order(data), parse_cols(data))
+    room = new_game_state(parse_turn_order(data), parse_rows(data))
     room['players'] = {room['turn_order'][0]: token}
     rooms[room_id] = room
     return jsonify({'roomId': room_id, 'playerToken': token, 'color': room['turn_order'][0]})
@@ -447,9 +445,8 @@ def room_move(room_id):
     if room['game_over'] or room['current_player'] != color:
         return jsonify({'error': 'Not your turn'}), 400
 
-    cols = len(room['board'][0])
     col = data.get('col')
-    if col is None or not (0 <= col < cols):
+    if col is None or not (0 <= col < COLS):
         return jsonify({'error': 'Invalid column'}), 400
     if get_target_row(room, col) == -1:
         return jsonify({'error': 'Column full'}), 400
@@ -470,7 +467,7 @@ def room_reset(room_id):
         return jsonify({'error': 'Invalid token'}), 403
 
     players = room['players']
-    fresh = new_game_state(room['turn_order'], len(room['board'][0]))
+    fresh = new_game_state(room['turn_order'], len(room['board']))
     fresh['players'] = players
     rooms[room_id.upper()] = fresh
     return room_response(fresh, color)

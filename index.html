@@ -29,7 +29,8 @@
     }
 
     :root {
-      --cell: min(70px, calc((100vw - 80px) / 7));
+      --cols: 7;
+      --cell: min(70px, calc((100vw - 80px) / var(--cols)));
       --gap: max(4px, calc(var(--cell) * 0.11));
     }
 
@@ -200,9 +201,9 @@
   <div id="ai-menu-screen" class="panel hidden">
     <p class="hint">Board size</p>
     <div class="btn-row">
-      <button class="size-btn selected" id="ai-rows-6-btn" data-rows="6">6 Rows</button>
-      <button class="size-btn" id="ai-rows-8-btn" data-rows="8">8 Rows</button>
-      <button class="size-btn" id="ai-rows-10-btn" data-rows="10">10 Rows</button>
+      <button class="size-btn selected" id="ai-cols-7-btn" data-cols="7">7 Columns</button>
+      <button class="size-btn" id="ai-cols-9-btn" data-cols="9">9 Columns</button>
+      <button class="size-btn" id="ai-cols-11-btn" data-cols="11">11 Columns</button>
     </div>
     <p class="hint">How many players?</p>
     <div class="btn-row">
@@ -217,9 +218,9 @@
   <div id="online-menu-screen" class="panel hidden">
     <p class="hint">Board size</p>
     <div class="btn-row">
-      <button class="size-btn selected" id="online-rows-6-btn" data-rows="6">6 Rows</button>
-      <button class="size-btn" id="online-rows-8-btn" data-rows="8">8 Rows</button>
-      <button class="size-btn" id="online-rows-10-btn" data-rows="10">10 Rows</button>
+      <button class="size-btn selected" id="online-cols-7-btn" data-cols="7">7 Columns</button>
+      <button class="size-btn" id="online-cols-9-btn" data-cols="9">9 Columns</button>
+      <button class="size-btn" id="online-cols-11-btn" data-cols="11">11 Columns</button>
     </div>
     <p class="hint">Room size</p>
     <div class="btn-row">
@@ -267,8 +268,8 @@
   </div>
 
   <script>
-    let ROWS = 6;
-    const COLS = 7;
+    const ROWS = 6;
+    let COLS = 7;
     const COLOR_HEX = { red: '#ff0000', yellow: '#ffff00', blue: '#3498db', green: '#2ecc71' };
     const menuScreen       = document.getElementById('menu-screen');
     const aiMenuScreen     = document.getElementById('ai-menu-screen');
@@ -288,13 +289,13 @@
     const ai2pBtn        = document.getElementById('ai-2p-btn');
     const ai3pBtn        = document.getElementById('ai-3p-btn');
     const ai4pBtn        = document.getElementById('ai-4p-btn');
-    const aiRowsBtns     = [6, 8, 10].map(n => document.getElementById(`ai-rows-${n}-btn`));
+    const aiColsBtns     = [7, 9, 11].map(n => document.getElementById(`ai-cols-${n}-btn`));
     const playOnlineBtn  = document.getElementById('play-online-btn');
     const onlineBackBtn  = document.getElementById('online-back-btn');
     const online2pBtn    = document.getElementById('online-2p-btn');
     const online3pBtn    = document.getElementById('online-3p-btn');
     const online4pBtn    = document.getElementById('online-4p-btn');
-    const onlineRowsBtns = [6, 8, 10].map(n => document.getElementById(`online-rows-${n}-btn`));
+    const onlineColsBtns = [7, 9, 11].map(n => document.getElementById(`online-cols-${n}-btn`));
     const createRoomBtn  = document.getElementById('create-room-btn');
     const joinRoomBtn    = document.getElementById('join-room-btn');
     const joinCodeInput  = document.getElementById('join-code-input');
@@ -311,8 +312,8 @@
     let mode = null;         // 'ai' | 'online'
     let online = null;       // { roomId, playerToken, color }
     let onlinePlayers = 2;   // room size chosen in the online sub-menu
-    let onlineRows = 6;      // board rows chosen in the online sub-menu
-    let aiRows = 6;          // board rows chosen in the vs-computer sub-menu
+    let onlineCols = 7;      // board columns chosen in the online sub-menu
+    let aiCols = 7;          // board columns chosen in the vs-computer sub-menu
     let myColor = 'red';     // this client's own color (always red in vs-computer mode)
     let pollTimer = null;
     let previousBoard = null; // last-rendered board, used to detect newly-dropped discs
@@ -399,9 +400,10 @@
     }
 
     // ── Build the grid DOM ──────────────────────────────────────────
-    function buildGrid(rows) {
-      ROWS = rows;
-      boardEl.style.gridTemplateRows = `repeat(${rows}, var(--cell))`;
+    function buildGrid(cols) {
+      COLS = cols;
+      document.documentElement.style.setProperty('--cols', cols);
+      boardEl.style.gridTemplateColumns = `repeat(${cols}, var(--cell))`;
       boardEl.innerHTML = '';
       for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
@@ -413,7 +415,7 @@
         }
       }
     }
-    buildGrid(ROWS);
+    buildGrid(COLS);
 
     // ── Drop animation ────────────────────────────────────────────────
     function getCellOffset(r, c) {
@@ -476,8 +478,8 @@
     function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
     async function renderState(state) {
-      if (state.board.length !== ROWS) {
-        buildGrid(state.board.length);
+      if (state.board[0].length !== COLS) {
+        buildGrid(state.board[0].length);
         previousBoard = null; // grid was rebuilt — nothing to diff against
       }
       const instant = !previousBoard || animating;
@@ -573,21 +575,21 @@
       });
       return res.json();
     }
-    async function sendAiReset(players, rows) {
+    async function sendAiReset(players, cols) {
       const res = await fetch('/reset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ players, rows })
+        body: JSON.stringify({ players, cols })
       });
       return res.json();
     }
 
     // ── Online-mode fetch helpers ────────────────────────────────────
-    async function createRoom(players, rows) {
+    async function createRoom(players, cols) {
       const res = await fetch('/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ players, rows })
+        body: JSON.stringify({ players, cols })
       });
       return res.json();
     }
@@ -729,7 +731,7 @@
       busy = true;
       try {
         if (mode === 'ai') {
-          const state = await sendAiReset(aiPlayerCount, aiRows);
+          const state = await sendAiReset(aiPlayerCount, aiCols);
           await renderState(state);
         } else if (mode === 'online') {
           const state = await sendRoomReset();
@@ -750,7 +752,7 @@
       aiPlayerCount = players;
       previousBoard = null;
       showScreen(gameScreen);
-      const state = await sendAiReset(players, aiRows);
+      const state = await sendAiReset(players, aiCols);
       await renderState(state);
     }
 
@@ -760,9 +762,9 @@
     ai3pBtn.addEventListener('click', () => startAiGame(3));
     ai4pBtn.addEventListener('click', () => startAiGame(4));
 
-    aiRowsBtns.forEach(btn => btn.addEventListener('click', () => {
-      aiRows = +btn.dataset.rows;
-      aiRowsBtns.forEach(b => b.classList.toggle('selected', b === btn));
+    aiColsBtns.forEach(btn => btn.addEventListener('click', () => {
+      aiCols = +btn.dataset.cols;
+      aiColsBtns.forEach(b => b.classList.toggle('selected', b === btn));
     }));
 
     playOnlineBtn.addEventListener('click', () => {
@@ -782,13 +784,13 @@
     online3pBtn.addEventListener('click', () => selectOnlineSize(3));
     online4pBtn.addEventListener('click', () => selectOnlineSize(4));
 
-    onlineRowsBtns.forEach(btn => btn.addEventListener('click', () => {
-      onlineRows = +btn.dataset.rows;
-      onlineRowsBtns.forEach(b => b.classList.toggle('selected', b === btn));
+    onlineColsBtns.forEach(btn => btn.addEventListener('click', () => {
+      onlineCols = +btn.dataset.cols;
+      onlineColsBtns.forEach(b => b.classList.toggle('selected', b === btn));
     }));
 
     createRoomBtn.addEventListener('click', async () => {
-      const res = await createRoom(onlinePlayers, onlineRows);
+      const res = await createRoom(onlinePlayers, onlineCols);
       if (res.error) { onlineErrorEl.textContent = res.error; return; }
       mode = 'online';
       previousBoard = null;
